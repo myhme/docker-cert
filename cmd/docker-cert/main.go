@@ -3,147 +3,118 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log" // Using standard log. Consider a structured logger for production.
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"docker-cert/internal/acme"    // Your existing import
+	"docker-cert/internal/config"  // Your existing import
+	"docker-cert/internal/httpapi" // Your existing import - THIS IS KEY FOR /healthz
+	"docker-cert/internal/ipupdater" // Your existing import
+	"docker-cert/internal/renewal" // Your existing import
+	"docker-cert/internal/storage" // Your existing import
 )
-
-const (
-	defaultPort           = "8080"
-	serverReadTimeout     = 5 * time.Second
-	serverReadHeaderTimeout = 3 * time.Second
-	serverWriteTimeout    = 10 * time.Second
-	serverIdleTimeout     = 120 * time.Second
-	shutdownTimeout       = 30 * time.Second
-)
-
-// healthzHandler is a lightweight handler that responds with 200 OK.
-// This is targeted by the Docker healthcheck.
-func healthzHandler(w http.ResponseWriter, r *http.Request) {
-	// Log the request (optional, but useful for seeing if healthchecks are hitting)
-	log.Printf("INFO: Main App: /healthz endpoint hit by %s (User-Agent: %s)\n", r.RemoteAddr, r.UserAgent())
-
-	// This endpoint should be very fast.
-	// Avoid any blocking calls or heavy computations.
-	// If you need to check a critical component's status, ensure that check is quick.
-	// Example:
-	// if !isSomeCriticalComponentOkay() {
-	//    http.Error(w, "Critical component unhealthy", http.StatusServiceUnavailable)
-	//    return
-	// }
-
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, err := w.Write([]byte("OK"))
-	if err != nil {
-		// This error during write is less common but good to log.
-		log.Printf("ERROR: Main App: Failed to write /healthz response: %v\n", err)
-	}
-}
-
-// rootHandler provides a basic response for the root path.
-func rootHandler(w http.ResponseWriter, r *http.Request) {
-	// If you only want to serve /healthz and nothing else on this port,
-	// you might have this return 404 for path "/" as well,
-	// or not register a handler for "/" at all (letting the ServeMux handle it as 404).
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		log.Printf("INFO: Main App: 404 Not Found for path: %s\n", r.URL.Path)
-		return
-	}
-	log.Printf("INFO: Main App: / (root) endpoint hit by %s\n", r.RemoteAddr)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("docker-cert application is running. Health check available at /healthz."))
-}
 
 func main() {
-	// Configure logger
-	log.SetOutput(os.Stdout)
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds) // Example: include microseconds for more precise timing
+	// Using your established logger
+	logger := log.New(os.Stdout, "DOCKER-CERT: ", log.LstdFlags|log.Lshortfile)
+	logger.Println("Starting ACME Certificate Manager...")
 
-	log.Println("INFO: Main App: Starting docker-cert application...")
-
-	// Get port from environment variable, default if not set.
-	// This should match the ENV INTERNAL_HTTP_PORT in your Dockerfile.
-	port := os.Getenv("INTERNAL_HTTP_PORT")
-	if port == "" {
-		port = defaultPort
-		log.Printf("INFO: Main App: INTERNAL_HTTP_PORT not set, defaulting to %s\n", port)
-	}
-	listenAddr := fmt.Sprintf(":%s", port) // Listen on all available network interfaces (e.g., 0.0.0.0)
-
-	// Create a new ServeMux (HTTP request router)
-	mux := http.NewServeMux()
-
-	// Register handlers
-	mux.HandleFunc("/healthz", healthzHandler)
-	mux.HandleFunc("/", rootHandler) // Handles the root path and any other undefined paths (as 404)
-
-	// Configure the HTTP server
-	server := &http.Server{
-		Addr:              listenAddr,
-		Handler:           mux,
-		ReadTimeout:       serverReadTimeout,
-		ReadHeaderTimeout: serverReadHeaderTimeout,
-		WriteTimeout:      serverWriteTimeout,
-		IdleTimeout:       serverIdleTimeout,
+	appConfig, err := config.LoadConfig(logger)
+	if err != nil {
+		logger.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Channel to listen for OS signals for graceful shutdown
-	stopChan := make(chan os.Signal, 1)
-	signal.Notify(stopChan, syscall.SIGINT, syscall.SIGTERM)
+	// Create base certs directory if it doesn't exist
+	if err := os.MkdirAll(appConfig.CertsBasePath, 0755); err != nil {
+		logger.Fatalf("Failed to create base certs directory %s: %v", appConfig.CertsBasePath, err)
+	}
+	// Attempt to set ownership of the certs directory
+	if err := storage.ChownR(appConfig.CertsBasePath, appConfig.UID, appConfig.GID); err != nil {
+		logger.Printf("WARNING: Initial chown of %s failed: %v. Ensure permissions are correct, especially if not running as root.", appConfig.CertsBasePath, err)
+	}
 
-	// Goroutine to start the HTTP server
+	acmeManager, err := acme.NewManager(appConfig, logger)
+	if err != nil {
+		logger.Fatalf("Failed to create ACME manager: %v", err)
+	}
+
+	// Initialize IP Updater Service
+	ipUpdateService := ipupdater.NewService(appConfig, logger)
+	if appConfig.DuckDNSIPUpdateDomain != "" {
+		logger.Println("Performing initial DuckDNS IP update check...")
+		// Run initial update in a goroutine so it doesn't block startup if network is slow
+		go ipUpdateService.CheckAndPerformIPUpdate() // Assuming this function exists and is non-blocking or short-lived
+	}
+
+	logger.Println("Performing initial certificate management run...")
+	if err := acmeManager.ManageCertificates(); err != nil {
+		// Log as error but continue, as renewals might fix it.
+		logger.Printf("ERROR during initial certificate management: %v. Will rely on scheduled renewals.", err)
+	} else {
+		logger.Println("Initial certificate management run completed successfully.")
+	}
+
+	// Start HTTP server for health checks and API.
+	// The /healthz endpoint needs to be defined within your httpapi package.
+	httpServer := httpapi.NewServer(appConfig, acmeManager, ipUpdateService, logger) // Pass services
 	go func() {
-		log.Printf("INFO: Main App: HTTP server starting to listen on %s\n", listenAddr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("FATAL: Main App: HTTP server ListenAndServe failed: %v\n", err)
+		logger.Printf("Attempting to start HTTP API server on internal port %s", appConfig.InternalHTTPPort)
+		// Ensure httpapi.Start() listens on "0.0.0.0:" + port or ":" + port
+		if startErr := httpServer.Start(); startErr != nil && startErr != http.ErrServerClosed {
+			logger.Fatalf("Failed to start HTTP API server: %v", startErr)
 		}
-		log.Println("INFO: Main App: HTTP server has stopped listening.")
+		logger.Println("HTTP API server has shut down.")
 	}()
 
-	// ---------------------------------------------------------------------
-	// V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V V
-	//
-	// YOUR ACTUAL DOCKER-CERT APPLICATION LOGIC GOES HERE.
-	// This could involve:
-	//  - Initializing ACME clients.
-	//  - Setting up DuckDNS updaters.
-	//  - Starting background tasks or schedulers.
-	//  - Etc.
-	//
-	// For this runnable example, we'll just log that it's "running"
-	// and then the main goroutine will block waiting for a shutdown signal.
-	// In a real app, you might have other blocking calls or a select loop.
-	//
-	log.Println("INFO: Main App: Core application logic would be running here.")
-	log.Println("INFO: Main App: Application is ready and awaiting termination signal (Ctrl+C)...")
-	//
-	// ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^
-	// ---------------------------------------------------------------------
-
-
-	// Block until a shutdown signal is received
-	sig := <-stopChan
-	log.Printf("INFO: Main App: Received signal: %s. Initiating graceful shutdown...\n", sig)
-
-	// Create a context with a timeout for the graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-
-	// Attempt to gracefully shut down the HTTP server
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("FATAL: Main App: HTTP server graceful shutdown failed: %v\n", err)
+	// Start certificate renewal scheduler
+	if appConfig.RenewalCheckInterval > 0 {
+		renewalScheduler := renewal.NewScheduler(appConfig, acmeManager, logger)
+		go renewalScheduler.Start() // Assuming Start() runs its own loop and respects shutdown
 	} else {
-		log.Println("INFO: Main App: HTTP server shut down gracefully.")
+		logger.Println("Certificate renewal checks disabled (interval is zero or negative).")
 	}
 
-	// Perform any other cleanup your application needs before exiting
-	log.Println("INFO: Main App: Application cleanup finished.")
-	log.Println("INFO: Main App: Exiting.")
+	// Start IP update scheduler
+	if appConfig.DuckDNSIPUpdateDomain != "" && appConfig.DuckDNSIPUpdateInterval > 0 {
+		go ipUpdateService.StartScheduler() // Assuming StartScheduler() runs its own loop
+	} else {
+		logger.Println("Automatic DuckDNS IP updates disabled (domain not set or interval is zero/negative).")
+	}
+
+	logger.Println("ACME Certificate Manager is running. Press Ctrl+C or send SIGTERM to exit.")
+
+	// Wait for interrupt signal for graceful shutdown
+	quitChannel := make(chan os.Signal, 1)
+	signal.Notify(quitChannel, syscall.SIGINT, syscall.SIGTERM)
+	receivedSignal := <-quitChannel
+	logger.Printf("Received signal: %s. Shutting down ACME Certificate Manager...", receivedSignal)
+
+	// Create a context with a timeout for graceful shutdowns
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second) // Adjust timeout as needed
+	defer cancelShutdown()
+
+	// Shutdown HTTP server
+	logger.Println("Attempting to gracefully shut down HTTP API server...")
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Printf("Error during HTTP server graceful shutdown: %v", err)
+	} else {
+		logger.Println("HTTP API server shut down gracefully.")
+	}
+
+	// TODO: Add graceful shutdown for renewalScheduler and ipUpdateService if they have Stop() methods
+	// Example:
+	// if renewalScheduler != nil { // if it was started
+	//     logger.Println("Stopping renewal scheduler...")
+	//     renewalScheduler.Stop(shutdownCtx) // Assuming a Stop method that respects context
+	// }
+	// if ipUpdateService != nil && appConfig.DuckDNSIPUpdateDomain != "" && appConfig.DuckDNSIPUpdateInterval > 0 {
+	//     logger.Println("Stopping IP update scheduler...")
+	//     ipUpdateService.StopScheduler(shutdownCtx) // Assuming a Stop method
+	// }
+
+	logger.Println("ACME Certificate Manager shut down gracefully.")
 }
