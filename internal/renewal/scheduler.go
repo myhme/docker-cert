@@ -1,73 +1,88 @@
+// File: internal/renewal/scheduler.go
 package renewal
 
 import (
+	"context"
+	"log"
+	"sync"
 	"time"
 
-	"docker-cert/internal/acme" // <-- Updated import path
+	// Assuming these are your actual imports (adjust module path)
+	"docker-cert/internal/acme"
 	"docker-cert/internal/config"
 )
 
-// Logger interface for dependency injection.
-type Logger interface {
-	Printf(format string, v ...interface{})
-	Println(v ...interface{})
-}
-
-// Scheduler handles periodic certificate renewal checks.
 type Scheduler struct {
-	config      *config.Config
+	cfg         *config.Config
 	acmeManager *acme.Manager
-	logger      Logger
-	ticker      *time.Ticker
-	// done chan bool // For explicit stop, if needed beyond program termination
+	logger      *log.Logger
+	stopChan    chan struct{}    // Channel to signal the scheduler's main loop to stop
+	wg          sync.WaitGroup // To wait for the main loop goroutine to finish
+	// isRunning bool           // Optional: to prevent multiple starts if needed
 }
 
-// NewScheduler creates a new renewal scheduler.
-func NewScheduler(cfg *config.Config, manager *acme.Manager, logger Logger) *Scheduler {
-	if logger == nil {
-		panic("logger cannot be nil for Renewal Scheduler")
-	}
+func NewScheduler(cfg *config.Config, acmeManager *acme.Manager, logger *log.Logger) *Scheduler {
+	// logger.Println("INFO: Renewal: Initializing Scheduler...") // Already logged in main
 	return &Scheduler{
-		config:      cfg,
-		acmeManager: manager,
+		cfg:         cfg,
+		acmeManager: acmeManager,
 		logger:      logger,
-		// done: make(chan bool),
+		stopChan:    make(chan struct{}), // Initialize the stop channel
 	}
 }
 
-// Start begins the renewal check loop. This should be run in a goroutine.
+// Start begins the periodic certificate renewal checks.
 func (s *Scheduler) Start() {
-	if s.config.RenewalCheckInterval <= 0 {
-		s.logger.Println("Renewal scheduler disabled: interval is zero or negative.")
-		return
-	}
+	// if s.isRunning { s.logger.Println("INFO: Renewal: Scheduler already running."); return }
+	// s.isRunning = true
 
-	s.logger.Printf("Renewal scheduler starting with check interval: %v", s.config.RenewalCheckInterval)
-	s.ticker = time.NewTicker(s.config.RenewalCheckInterval)
-	defer s.ticker.Stop()
+	s.wg.Add(1) // Increment for the main processing goroutine
+	go func() {
+		defer s.wg.Done() // Decrement when this goroutine exits
+		s.logger.Printf("INFO: Renewal: Scheduler worker goroutine started. Check interval: %v\n", s.cfg.RenewalCheckInterval)
 
-	for {
-		// For this example, the loop will run until the program terminates.
-		// If a more graceful shutdown of this specific goroutine is needed independent
-		// of program termination, a 'done' channel or context cancellation would be used.
-		<-s.ticker.C
-		s.performRenewalCheck()
-	}
+		ticker := time.NewTicker(s.cfg.RenewalCheckInterval)
+		defer ticker.Stop()
+
+	schedulerLoop:
+		for {
+			select {
+			case <-ticker.C:
+				s.logger.Println("INFO: Renewal: Performing scheduled certificate management run...")
+				if err := s.acmeManager.ManageCertificates(); err != nil { // Assuming this is the core logic
+					s.logger.Printf("ERROR: Renewal: Error during scheduled certificate management: %v\n", err)
+				} else {
+					s.logger.Println("INFO: Renewal: Scheduled certificate management run completed successfully.")
+				}
+			case <-s.stopChan: // Listen for the stop signal
+				s.logger.Println("INFO: Renewal: Scheduler stop signal received, shutting down worker goroutine...")
+				break schedulerLoop // Exit the loop
+			}
+		}
+		s.logger.Println("INFO: Renewal: Scheduler worker goroutine stopped.")
+	}()
 }
 
-func (s *Scheduler) performRenewalCheck() {
-	s.logger.Println("Performing scheduled certificate renewal check...")
-	if err := s.acmeManager.ManageCertificates(); err != nil {
-		s.logger.Printf("ERROR during scheduled certificate management: %v", err)
-	} else {
-		s.logger.Println("Scheduled certificate management run completed successfully.")
-	}
-}
+// Stop signals the scheduler to shut down and waits for it to complete,
+// respecting the provided context for a timeout on the wait.
+func (s *Scheduler) Stop(ctx context.Context) {
+	s.logger.Println("INFO: Renewal: Initiating scheduler stop...")
+	// if !s.isRunning { s.logger.Println("INFO: Renewal: Scheduler not running or already stopped."); return }
 
-// Stop signals the renewal scheduler to terminate (example if using a done channel).
-// func (s *Scheduler) Stop() {
-//  if s.ticker != nil {
-//      s.logger.Println("Signaling renewal scheduler to stop...")
-//      s.done <- true // This would require the Start loop to select on s.done
-//  }
-// }
+	close(s.stopChan) // Signal the worker goroutine by closing the stop channel
+
+	// Wait for the worker goroutine to finish, with a timeout from the context
+	doneWaiting := make(chan struct{})
+	go func() {
+		s.wg.Wait() // Wait for all goroutines (added with s.wg.Add) to complete
+		close(doneWaiting)
+	}()
+
+	select {
+	case <-doneWaiting:
+		s.logger.Println("INFO: Renewal: Scheduler stopped gracefully.")
+	case <-ctx.Done(): // If the overall shutdown context times out
+		s.logger.Printf("WARNING: Renewal: Timed out waiting for scheduler to stop: %v\n", ctx.Err())
+	}
+	// s.isRunning = false
+}
