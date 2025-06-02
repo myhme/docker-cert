@@ -1,82 +1,76 @@
-# ---- Builder Stage ----
-# Use a specific Go version for reproducibility. Alpine variants are smaller.
-FROM golang:1.24-alpine AS builder
+# ---- Base Builder Stage (common setup, Go tools, vendored dependencies) ----
+FROM golang:1.24-alpine AS base_builder
+LABEL stage="base_builder"
 
-# Set the working directory for the builder stage
 WORKDIR /src/app
 
-# Install git and ca-certificates.
-# Git might be needed if any modules (even with vendoring) have submodules or need git for versioning.
-# ca-certificates are good for any potential HTTPS calls during build (though vendoring minimizes this).
+# Install git and ca-certificates (common build tools)
 RUN apk add --no-cache git ca-certificates
 
-# Copy go.mod and go.sum first to leverage Docker cache for dependency resolution steps.
+# Copy module files and vendor directory first to leverage caching for dependencies
 COPY go.mod go.sum ./
-
-# --- Dependency Handling: Vendoring (Recommended) ---
-# 1. Locally, run: `go mod tidy && go mod vendor`
-# 2. Commit the 'vendor' directory to your repository.
-# Copy the vendor directory.
 COPY vendor/ ./vendor/
 
-# Set GOFLAGS to use the vendored modules. This ensures that Go uses the packages from the vendor directory.
+# Set GOFLAGS to use vendored modules for subsequent Go commands
 ENV GOFLAGS="-mod=vendor"
 
-# Verify dependencies.
+# Verify vendored dependencies
+# This should be faster if GOFLAGS is set and vendor dir is complete.
 RUN go mod verify
 
-# Copy the rest of the application source code
-# This should come after dependency handling to optimize Docker layer caching.
+# ---- Builder for the main 'docker-cert' application ----
+FROM base_builder AS cert_builder
+LABEL stage="cert_builder"
+
+# WORKDIR is inherited from base_builder (/src/app)
+
+# Copy all source code.
+# For better caching, you could try to copy only ./cmd/docker-cert/ and its specific dependencies
+# if they are well-isolated from other parts of the monorepo.
+# However, `COPY . .` is simpler if isolation is complex.
 COPY . .
 
-# Build the main application
-# CGO_ENABLED=0 ensures a static binary without C dependencies.
-# -ldflags '-s -w' strips debug symbols and DWARF info, reducing binary size.
-# -extldflags "-static"' attempts to statically link against external libraries (for truly static binaries).
-RUN CGO_ENABLED=0 go build -a -ldflags '-s -w -extldflags "-static"' -o /app/docker-cert ./cmd/docker-cert/main.go
+# Build the main application (Removed -a flag)
+RUN echo "Building docker-cert..." && \
+    CGO_ENABLED=0 go build \
+        -ldflags '-s -w -extldflags "-static"' \
+        -o /app/docker-cert ./cmd/docker-cert/main.go
 
-# Build the healthcheck utility
-RUN CGO_ENABLED=0 go build -a -ldflags '-s -w -extldflags "-static"' -o /app/healthcheck ./cmd/healthcheck/main.go
+# ---- Builder for the 'healthcheck' utility ----
+FROM base_builder AS healthcheck_builder
+LABEL stage="healthcheck_builder"
 
-# Ensure the built binaries are executable before copying to the final stage.
-RUN chmod +x /app/docker-cert /app/healthcheck
+# WORKDIR is inherited
 
+# Copy all source code. (See note in cert_builder about selective copying)
+COPY . .
 
-# --- Final Stage ---
-# Use a distroless base image. base-debian12 includes essential libraries like glibc and CA certificates.
+# Build the healthcheck utility (Removed -a flag)
+RUN echo "Building healthcheck..." && \
+    CGO_ENABLED=0 go build \
+        -ldflags '-s -w -extldflags "-static"' \
+        -o /app/healthcheck ./cmd/healthcheck/main.go
+
+# --- Final Stage (Distroless) ---
 FROM gcr.io/distroless/base-debian12 AS final
 
 # The nonroot user (UID 1001, GID 1001) is the default in distroless/base.
-# We will explicitly set it for clarity and ensure our files are owned by it.
 USER 1001:1001
-
-# Set the working directory for the final image.
-# This directory will be used by the nonroot user.
 WORKDIR /app
 
-# Copy the compiled application binary from the builder stage.
-# Use --chown to set the owner to the nonroot user (UID 1001, GID 1001).
-# Permissions (including execute) set in the builder stage are preserved.
-COPY --chown=1001:1001 --from=builder /app/docker-cert /app/docker-cert
+# Copy the main application binary from the cert_builder stage
+COPY --chown=1001:1001 --from=cert_builder /app/docker-cert /app/docker-cert
 
-# Copy the compiled healthcheck utility from the builder stage.
-COPY --chown=1001:1001 --from=builder /app/healthcheck /app/healthcheck
+# Copy the healthcheck utility from the healthcheck_builder stage
+COPY --chown=1001:1001 --from=healthcheck_builder /app/healthcheck /app/healthcheck
 
-# Expose the internal HTTP port (for health checks and API).
-# This should match the INTERNAL_HTTP_PORT environment variable's default or actual value.
+# Ensure binaries are executable (permissions are generally preserved by COPY,
+# but good to ensure they were set in builder stage via go build defaults)
+
 EXPOSE 8080
-
-# Environment variable for the internal port (can be overridden at runtime).
 ENV INTERNAL_HTTP_PORT=8080
 
-# HEALTHCHECK instruction using the Go utility.
-# The nonroot user (1001) must have execute permission on /app/healthcheck.
 HEALTHCHECK --interval=1m30s --timeout=10s --start-period=45s --retries=3 \
   CMD ["/app/healthcheck"]
 
-# Command to run the application.
-# The nonroot user (1001) must have execute permission on /app/docker-cert.
 ENTRYPOINT ["/app/docker-cert"]
-
-# Optional: Default command arguments if your entrypoint needs them.
-# CMD ["--default-arg", "value"]
