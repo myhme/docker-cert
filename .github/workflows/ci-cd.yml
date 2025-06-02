@@ -31,7 +31,7 @@ jobs:
           cache-dependency-path: "**/go.sum"
 
       - name: Run linters (e.g., golangci-lint)
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest # Or pin to a specific version of golangci-lint
           args: --timeout=5m # Optional: increase timeout for larger projects
