@@ -1,27 +1,60 @@
-version: '2.4'
+version: '3.8'
 
 services:
-  duckdns:
-    image: maksimstojkovic/duckdns
-    container_name: duckdns
-    environment:
-      - DUCKDNS_TOKEN=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-      - DUCKDNS_DOMAIN=test.duckdns.org
-      - DUCKDNS_DELAY=5 #optional
-    restart: unless-stopped
-
-  letsencrypt:
-    image: maksimstojkovic/letsencrypt
-    container_name: letsencrypt
+  docker-cert:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: docker-cert
+    # Optional: Use a pre-built image from your registry.
+    # If using GitHub Container Registry and your repo is public, it might be:
+    # image: ghcr.io/your-github-username/docker-cert:latest
+    # Or if your repo is named 'docker-cert':
+    # image: ghcr.io/${GITHUB_USER_OR_ORG}/docker-cert:latest 
     volumes:
-      - ./certs:/etc/letsencrypt
+      # Named volume to persist certificates and ACME account keys
+      - certs_data_volume:/data/config # This is the CERTS_BASE_PATH used internally
     environment:
-      - DUCKDNS_TOKEN=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-      - DUCKDNS_DOMAIN=test.duckdns.org
-      - LETSENCRYPT_DOMAIN= #optional
-      - LETSENCRYPT_WILDCARD=false #optional
-      - LETSENCRYPT_EMAIL= #optional
-      - TESTING=false #optional
-      - UID=0 #optional
-      - GID=0 #optional
+      # These will be picked up from the .env file in the same directory as docker-compose.yml
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+      - LETSENCRYPT_DOMAIN=${LETSENCRYPT_DOMAIN}
+      - LETSENCRYPT_WILDCARD=${LETSENCRYPT_WILDCARD}
+      - TESTING=${TESTING}
+      - RENEWAL_CHECK_INTERVAL_HOURS=${RENEWAL_CHECK_INTERVAL_HOURS}
+      - CA_ORDER=${CA_ORDER}
+      - LETSENCRYPT_PREFERRED_CHAIN=${LETSENCRYPT_PREFERRED_CHAIN}
+
+      - DUCKDNS_TOKEN=${DUCKDNS_TOKEN}
+      - DUCKDNS_DOMAIN_FOR_CHALLENGE=${DUCKDNS_DOMAIN_FOR_CHALLENGE}
+
+      - ZEROSSL_ENABLED=${ZEROSSL_ENABLED}
+      - ZEROSSL_EAB_KID=${ZEROSSL_EAB_KID}
+      - ZEROSSL_EAB_HMAC_KEY=${ZEROSSL_EAB_HMAC_KEY}
+      
+      - CERTS_BASE_PATH=${CERTS_BASE_PATH} # Should match the volume mount target: /data/config
+      - UID=${UID}
+      - GID=${GID}
+
+      - INTERNAL_HTTP_PORT=${INTERNAL_HTTP_PORT:-8080} # Default internal port for healthcheck
+
+    # If you need to expose the internal HTTP API (e.g., for external monitoring, not just Docker healthcheck):
+    # ports:
+    #   - "${DOCKER_CERT_API_HOST_PORT:-8081}:${INTERNAL_HTTP_PORT:-8080}"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 128M # Go apps can be quite memory efficient
+    healthcheck:
+      # Assumes your Go app's HTTP server (on INTERNAL_HTTP_PORT) has a /healthz endpoint.
+      # distroless/base-debian12 provides /bin/sh and a basic wget/curl via busybox.
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:${INTERNAL_HTTP_PORT:-8080}/healthz || curl -sf http://localhost:${INTERNAL_HTTP_PORT:-8080}/healthz || exit 1"]
+      interval: 1m30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+volumes:
+  certs_data_volume: # Persists certificates across container restarts/recreations
+    driver: local

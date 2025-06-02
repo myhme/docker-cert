@@ -1,0 +1,91 @@
+# .github/workflows/ci-cd.yml
+name: Docker-Cert CI/CD
+
+on:
+  push:
+    branches:
+      - "main"
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches:
+      - "main"
+
+permissions:
+  contents: read
+  packages: write # Required to push to GitHub Container Registry (ghcr.io)
+  # id-token: write # Required for OIDC if using cloud provider auth
+
+jobs:
+  lint-test-build:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22' # Ensure this matches your go.mod
+          cache-dependency-path: "**/go.sum"
+
+      - name: Run linters (e.g., golangci-lint)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest # Or pin to a specific version of golangci-lint
+          args: --timeout=5m # Optional: increase timeout for larger projects
+          # Only show new issues if running on a PR
+          only-new-issues: ${{ github.event_name == 'pull_request' }}
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      # - name: Upload coverage reports to Codecov
+        # uses: codecov/codecov-action@v4
+        # with:
+          # token: ${{ secrets.CODECOV_TOKEN }} # Optional: if you use Codecov
+          # files: ./coverage.out
+        # continue-on-error: true # Continue if Codecov upload fails (e.g., for forks)
+
+      - name: Build Go binary (for verification)
+        run: CGO_ENABLED=0 GOOS=linux go build -a -ldflags '-s -w' -o docker-cert-bin ./cmd/docker-cert
+
+  build-and-push-docker-image:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: lint-test-build # Ensure linting and tests pass first
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # images: ghcr.io/your-github-username/docker-cert # Replace with your actual image name if needed
+          # Using github.repository gives <owner>/<repo-name>
+          images: ghcr.io/${{ github.repository }} 
+          tags: |
+            type=edge,branch=main
+            type=ref,event=tag
+            type=sha,prefix=,suffix=,event=push
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

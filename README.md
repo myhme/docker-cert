@@ -1,39 +1,103 @@
-# Let's Encrypt for Duck DNS
+# Docker-Cert: ACME Certificate Manager
 
-[![Build Status](https://github.com/maksimstojkovic/docker-letsencrypt/actions/workflows/docker-build.yml/badge.svg)](https://github.com/maksimstojkovic/docker-letsencrypt)
-[![Docker Pulls](https://img.shields.io/docker/pulls/maksimstojkovic/letsencrypt)](https://hub.docker.com/r/maksimstojkovic/letsencrypt)
-[![Docker Stars](https://img.shields.io/docker/stars/maksimstojkovic/letsencrypt)](https://hub.docker.com/r/maksimstojkovic/letsencrypt)
-[![Docker Image Size (latest by date)](https://img.shields.io/docker/image-size/maksimstojkovic/letsencrypt)](https://hub.docker.com/r/maksimstojkovic/letsencrypt)
-[![Docker Image Version (latest by date)](https://img.shields.io/docker/v/maksimstojkovic/letsencrypt)](https://hub.docker.com/r/maksimstojkovic/letsencrypt)
+Docker-Cert is a Go application designed to automatically obtain and renew SSL/TLS certificates from ACME Certificate Authorities (CAs) like Let's Encrypt and ZeroSSL. It uses the DNS-01 challenge method with DuckDNS, eliminating the need to expose any ports on your server for certificate validation. Certificates are stored in a structured, configurable path, making them easily accessible for other services.
 
-Automatically generates Let's Encrypt certificates using a lightweight Docker container without requiring any ports to be exposed for DNS challenges.
+This project is containerized using Docker with a minimal distroless image for enhanced security.
 
-## Environment Variables
+## Features
 
-* `DUCKDNS_TOKEN`: Duck DNS account token (obtained from [Duck DNS](https://www.duckdns.org)) (*required*)
-* `DUCKDNS_DOMAIN`: Full Duck DNS domain (e.g. `test.duckdns.org`) (*required*)
-* `LETSENCRYPT_DOMAIN`: Domain to generate SSL cert for. By default the SSL certificate is generated for `DUCKDNS_DOMAIN` (optional)
-* `LETSENCRYPT_WILDCARD`: `true` or `false`, indicating whether the SSL certificate should be for subdomains *only* of `LETSENCRYPT_DOMAIN` (i.e. `*.test.duckdns.org`), or for the main domain *only* (i.e. `test.duckdns.org`) (optional, default: `false`)
-* `LETSENCRYPT_EMAIL`: Email used for certificate renewal notifications (optional)
-* `LETSENCRYPT_CHAIN`: Preferred certificate chain (e.g. `ISRG Root X1`, see [https://letsencrypt.org/certificates](https://letsencrypt.org/certificates/) for more details) (optional)
-* `TESTING`: `true` or `false`, indicating whether a staging SSL certificate should be generated or not (optional, default: `false`)
-* `UID`: User ID to apply to Let's Encrypt files generated (optional, recommended, default: `0` - root)
-* `GID`: Group ID to apply to Let's Encrypt files generated (optional, recommended, default: `0` - root)
+-   **ACME Client:** Supports Let's Encrypt and ZeroSSL (with EAB credentials).
+-   **DNS-01 Challenge:** Uses DuckDNS for domain validation. No open ports required for challenges.
+-   **Automatic Renewal:** Periodically checks and renews certificates before they expire.
+-   **CA Redundancy:** Configurable order to try multiple CAs if one fails.
+-   **Structured Storage:** Saves certificates in a "folder-wise" manner (e.g., `/data/config/your.domain.com/live/...`).
+-   **Configurable Paths & Permissions:** Certificate storage path, UID, and GID for certificate files are configurable via environment variables.
+-   **Dockerized:** Runs in a lightweight, secure distroless Docker container.
+-   **Healthcheck Endpoint:** Includes an HTTP endpoint for Docker health checks.
+-   **Modular Go Project Structure.**
 
-## Notes
+## Project directory
 
-* The `DUCKDNS_DOMAIN` should already be pointing to the server with a dynamic IP. The [maksimstojkovic/duckdns](https://github.com/maksimstojkovic/docker-duckdns) image can be used to automatically update the IP address.
-* The format of `DUCKDNS_DOMAIN` should be `<subdomain>.duckdns.org`, regardless of the value of `LETSENCRYPT_WILDCARD`.
-* To use `LETSENCRYPT_DOMAIN` feature, the following DNS records need to be created for ACME authentication (records should not be proxied):
+```
+docker-cert/
+├── .github/
+│   ├── dependabot.yml
+│   └── workflows/
+│       └── ci-cd.yml
+├── cmd/
+│   └── docker-cert/
+│       └── main.go
+├── internal/
+│   ├── acme/
+│   │   ├── manager.go
+│   │   └── user.go
+│   ├── config/
+│   │   └── config.go
+│   ├── dns/
+│   │   └── duckdns_provider.go
+│   ├── httpapi/
+│   │   └── server.go
+│   ├── renewal/
+│   │   └── scheduler.go
+│   └── storage/
+│       └── certificate_storage.go
+├── Dockerfile
+├── docker-compose.yml
+├── go.mod
+├── go.sum
+└── README.md
+```
 
-| Type  | Name                                   | Value                              | Condition                         |
-|-------|----------------------------------------|------------------------------------|-----------------------------------|
-| CNAME | `*.<LETSENCRYPT_DOMAIN>`               | `<DUCKDNS_DOMAIN>`                 | `LETSENCRYPT_WILDCARD` == `true`  |
-| CNAME | `<LETSENCRYPT_DOMAIN>`                 | `<DUCKDNS_DOMAIN>`                 | `LETSENCRYPT_WILDCARD` == `false` |
-| CNAME | `_acme-challenge.<LETSENCRYPT_DOMAIN>` | `_acme-challenge.<DUCKDNS_DOMAIN>` |                                   |
+## Prerequisites
 
-## Volumes
+-   **Docker and Docker Compose:** To build and run the application.
+-   **DuckDNS Account:** You need a DuckDNS token and a DuckDNS domain (e.g., `your-subdomain.duckdns.org`).
+-   **DNS CNAME Records:** For each domain you want a certificate for (e.g., `my.service.com`), you must set up a CNAME record in your primary DNS provider pointing to your DuckDNS domain for the ACME challenge:
+    -   Record Type: `CNAME`
+    -   Name/Host: `_acme-challenge.my.service.com`
+    -   Value/Target: `_acme-challenge.your-acme-challenge-subdomain.duckdns.org`
+        (Here, `your-acme-challenge-subdomain.duckdns.org` is the value you'll set for `DUCKDNS_DOMAIN_FOR_CHALLENGE`).
+-   **(Optional) ZeroSSL EAB Credentials:** If you plan to use ZeroSSL, you'll need External Account Binding (EAB) KID and HMAC Key from your ZeroSSL dashboard for new account registrations.
 
-* `<certs>:/etc/letsencrypt`: A named or host volume which allows SSL certificates to persist and be accessed by other containers
+## Go Module Path
 
-**Note:** To use the `<certs>` host volume in another container, mount it as read-only for those containers. The `<certs>` host volume should be read-write enabled for the Letsencrypt container.
+This project uses `docker-cert` as its Go module path in the `go.mod` file. All internal import paths reflect this (e.g., `import "docker-cert/internal/config"`). If you clone this into a structure that requires a different module path (e.g., under a VCS host like `github.com/your-username/docker-cert`), you will need to update the `go.mod` file and all internal import paths accordingly.
+
+## Configuration
+
+Configuration is managed via environment variables. Create a `.env` file in the project root directory (where `docker-compose.yml` is located) with the following variables:
+
+# --- Core ACME Config ---
+LETSENCRYPT_EMAIL=your-email@example.com
+# Comma-separated list of domains for the cert (e.g., my.service.com,[www.my.service.com](https://www.my.service.com))
+LETSENCRYPT_DOMAIN=my.service.com
+LETSENCRYPT_WILDCARD=false # If true, first domain in LETSENCRYPT_DOMAIN is base for *.
+TESTING=false # true for staging CA endpoints, false for production
+RENEWAL_CHECK_INTERVAL_HOURS=12
+# Order of CAs to try (comma-separated: letsencrypt,zerossl)
+CA_ORDER=letsencrypt,zerossl
+# Optional: Preferred certificate chain (e.g., "ISRG Root X1")
+# LETSENCRYPT_PREFERRED_CHAIN=
+
+# --- DuckDNS Provider Config ---
+DUCKDNS_TOKEN=YOUR_DUCKDNS_TOKEN_HERE
+# The DuckDNS FQDN used for ACME challenges (e.g., your-acme-challenge-subdomain.duckdns.org)
+DUCKDNS_DOMAIN_FOR_CHALLENGE=your-acme-challenge-subdomain.duckdns.org
+
+# --- ZeroSSL Config (Only if ZEROSSL_ENABLED=true in CA_ORDER and you want to use it) ---
+ZEROSSL_ENABLED=true # Set to true if ZeroSSL is in CA_ORDER and you want to use it
+ZEROSSL_EAB_KID=YOUR_ZEROSSL_EAB_KID # Required for new ZeroSSL accounts
+ZEROSSL_EAB_HMAC_KEY=YOUR_ZEROSSL_EAB_HMAC_KEY # Required for new ZeroSSL accounts
+
+# --- Certificate Storage Path & Permissions ---
+# Base path inside the container where certificates will be stored.
+CERTS_BASE_PATH=/data/config
+UID=0 # User ID for cert files (0 for root)
+GID=0 # Group ID for cert files (0 for root)
+
+# --- HTTP API (for Healthcheck) ---
+# Internal port the Go application's HTTP server listens on for healthchecks.
+# This port is NOT exposed externally by default in docker-compose.
+INTERNAL_HTTP_PORT=8080
+# DOCKER_CERT_API_HOST_PORT=8081 # If you wanted to expose the API externally, uncomment and map in docker-compose.yml
+
