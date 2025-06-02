@@ -1,0 +1,4 @@
+data-dir*/
+test*/
+*.log
+recreate.sh

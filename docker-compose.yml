@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  docker-cert:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    container_name: docker-cert
+    volumes:
+      - certs_data_volume:/data/config
+    environment:
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+      - LETSENCRYPT_DOMAIN=${LETSENCRYPT_DOMAIN}
+      - LETSENCRYPT_WILDCARD=${LETSENCRYPT_WILDCARD}
+      - TESTING=${TESTING}
+      - RENEWAL_CHECK_INTERVAL_HOURS=${RENEWAL_CHECK_INTERVAL_HOURS}
+      - LETSENCRYPT_CHAIN=${LETSENCRYPT_CHAIN}
+
+      - DUCKDNS_TOKEN=${DUCKDNS_TOKEN} # Used for ACME challenges and as default for IP updates
+      
+      # For DuckDNS IP Updater
+      - DUCKDNS_IP_UPDATE_DOMAIN=${LETSENCRYPT_DOMAIN} # Uses LETSENCRYPT_DOMAIN for IP updates
+      - DUCKDNS_IP_UPDATE_INTERVAL_SECONDS=${DUCKDNS_IP_UPDATE_INTERVAL_SECONDS} # Interval in seconds
+      - DUCKDNS_IP_UPDATE_TOKEN=${DUCKDNS_IP_UPDATE_TOKEN} # Optional: if set, uses this for IP updates, otherwise defaults to DUCKDNS_TOKEN
+
+      - CERTS_BASE_PATH=${CERTS_BASE_PATH}
+      - UID=${UID}
+      - GID=${GID}
+
+      - INTERNAL_HTTP_PORT=${INTERNAL_HTTP_PORT:-8080}
+      - API_AUTH_TOKEN=${API_AUTH_TOKEN} # Optional API Bearer token
+
+    # To expose the API externally (e.g., for calling from another machine):
+    # ports:
+    #   - "${DOCKER_CERT_API_HOST_PORT:-8081}:${INTERNAL_HTTP_PORT:-8080}" # Map internal API port to a host port
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 128M # May need slight increase with more features
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:${INTERNAL_HTTP_PORT:-8080}/healthz || curl -sf http://localhost:${INTERNAL_HTTP_PORT:-8080}/healthz || exit 1"]
+      interval: 1m30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+volumes:
+  certs_data_volume:
+    driver: local

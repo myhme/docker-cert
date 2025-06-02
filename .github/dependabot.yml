@@ -1,0 +1,44 @@
+# .github/dependabot.yml
+version: 2
+updates:
+  # Enable version updates for Go modules
+  - package-ecosystem: "gomod"
+    directory: "/" # Location of go.mod and go.sum
+    schedule:
+      interval: "weekly" # Check for updates weekly
+    # reviewers:
+      # - "your-github-username-or-team" # Optional: assign reviewers
+    labels:
+      - "dependencies"
+      - "golang"
+    commit-message:
+      prefix: "gomod"
+      include: "scope"
+
+  # Enable version updates for Docker
+  - package-ecosystem: "docker"
+    directory: "/" # Location of Dockerfile
+    schedule:
+      interval: "weekly"
+    # reviewers:
+      # - "your-github-username-or-team"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+
+  # Enable version updates for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/" # Location of workflow files
+    schedule:
+      interval: "weekly"
+    # reviewers:
+      # - "your-github-username-or-team"
+    labels:
+      - "dependencies"
+      - "github_actions"
+    commit-message:
+      prefix: "actions"
+      include: "scope"
