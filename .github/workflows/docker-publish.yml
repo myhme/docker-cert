@@ -61,7 +61,7 @@ jobs:
         with:
           context: . 
           file: ./Dockerfile 
-          platforms: linux/arm64 # Added linux/amd64 for broader compatibility
+          platforms: linux/arm64,linux/amd64 # Added linux/amd64 for broader compatibility
           push: true 
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
