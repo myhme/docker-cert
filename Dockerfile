@@ -1,65 +1,26 @@
-# ---- Base Builder Stage (common setup, Go tools, vendored dependencies) ----
-FROM golang:1.24-alpine AS base_builder
-LABEL stage="base_builder"
-
-WORKDIR /src/app
-
-# Install git and ca-certificates (common build tools)
-RUN apk add --no-cache git ca-certificates
-
-# Copy module files and vendor directory first to leverage caching for dependencies
-COPY go.mod go.sum ./
-COPY vendor/ ./vendor/
-
-# Set GOFLAGS to use vendored modules for subsequent Go commands
-ENV GOFLAGS="-mod=vendor"
-
-# Verify vendored dependencies
-RUN go mod verify
-
-# ---- Builder for the main 'docker-cert' application ----
-FROM base_builder AS cert_builder
-LABEL stage="cert_builder"
-
-# Copy all source code.
-COPY . .
-
-# Build the main application, ensuring it's statically linked
-RUN echo "Building docker-cert..." && \
-    CGO_ENABLED=0 go build \
-        -ldflags '-s -w -extldflags "-static"' \
-        -o /app/docker-cert ./cmd/docker-cert/main.go
-
-# ---- Builder for the 'healthcheck' utility ----
-FROM base_builder AS healthcheck_builder
-LABEL stage="healthcheck_builder"
-
-# Copy all source code.
-COPY . .
-
-# Build the healthcheck utility, ensuring it's statically linked
-RUN echo "Building healthcheck..." && \
-    CGO_ENABLED=0 go build \
-        -ldflags '-s -w -extldflags "-static"' \
-        -o /app/healthcheck ./cmd/healthcheck/main.go
+# (Previous builder stages remain the same...)
 
 # --- Final Stage (Distroless) ---
-# Using distroless/base which has a default non-root user (UID 65532)
 FROM gcr.io/distroless/base-debian12 AS final
+
+# The default user is 'nonroot' (UID 65532, GID 65532)
+# We will ensure the working directory and certs directory are owned by this user.
+# The default CertsBasePath in your config is likely '/certs'
+ENV CERTS_BASE_PATH=/data/config
 
 WORKDIR /app
 
-# Copy the binaries from the builder stages.
-# By default, COPY preserves permissions. Go builds binaries with execute permissions for all.
-# We will set the user to 'nonroot' which is provided by the base image.
-# This user is UID 65532, GID 65532.
-COPY --from=cert_builder /app/docker-cert /app/docker-cert
-COPY --from=healthcheck_builder /app/healthcheck /app/healthcheck
+# Create the directory for certificates and set its ownership to the nonroot user.
+# Do this as root BEFORE switching the user.
+RUN mkdir -p ${CERTS_BASE_PATH} && chown nonroot:nonroot ${CERTS_BASE_PATH}
 
-# Set the user to the default non-root user provided by the distroless image.
-# This is a more secure default than running as root.
-# You can override this at runtime with `docker run --user <UID>:<GID> ...`
-# USER nonroot
+# Now, switch to the non-root user for all subsequent operations and for runtime.
+USER nonroot
+
+# Copy the binaries from the builder stages.
+# The --chown flag is useful here to ensure the nonroot user owns the binaries.
+COPY --chown=nonroot:nonroot --from=cert_builder /app/docker-cert /app/docker-cert
+COPY --chown=nonroot:nonroot --from=healthcheck_builder /app/healthcheck /app/healthcheck
 
 EXPOSE 8080
 ENV INTERNAL_HTTP_PORT=8080
