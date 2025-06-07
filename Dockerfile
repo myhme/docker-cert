@@ -59,7 +59,7 @@ COPY --from=healthcheck_builder /app/healthcheck /app/healthcheck
 # Set the user to the default non-root user provided by the distroless image.
 # This is a more secure default than running as root.
 # You can override this at runtime with `docker run --user <UID>:<GID> ...`
-USER nonroot
+# USER nonroot
 
 EXPOSE 8080
 ENV INTERNAL_HTTP_PORT=8080
