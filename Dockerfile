@@ -15,22 +15,16 @@ COPY vendor/ ./vendor/
 ENV GOFLAGS="-mod=vendor"
 
 # Verify vendored dependencies
-# This should be faster if GOFLAGS is set and vendor dir is complete.
 RUN go mod verify
 
 # ---- Builder for the main 'docker-cert' application ----
 FROM base_builder AS cert_builder
 LABEL stage="cert_builder"
 
-# WORKDIR is inherited from base_builder (/src/app)
-
 # Copy all source code.
-# For better caching, you could try to copy only ./cmd/docker-cert/ and its specific dependencies
-# if they are well-isolated from other parts of the monorepo.
-# However, `COPY . .` is simpler if isolation is complex.
 COPY . .
 
-# Build the main application (Removed -a flag)
+# Build the main application, ensuring it's statically linked
 RUN echo "Building docker-cert..." && \
     CGO_ENABLED=0 go build \
         -ldflags '-s -w -extldflags "-static"' \
@@ -40,32 +34,32 @@ RUN echo "Building docker-cert..." && \
 FROM base_builder AS healthcheck_builder
 LABEL stage="healthcheck_builder"
 
-# WORKDIR is inherited
-
-# Copy all source code. (See note in cert_builder about selective copying)
+# Copy all source code.
 COPY . .
 
-# Build the healthcheck utility (Removed -a flag)
+# Build the healthcheck utility, ensuring it's statically linked
 RUN echo "Building healthcheck..." && \
     CGO_ENABLED=0 go build \
         -ldflags '-s -w -extldflags "-static"' \
         -o /app/healthcheck ./cmd/healthcheck/main.go
 
 # --- Final Stage (Distroless) ---
+# Using distroless/base which has a default non-root user (UID 65532)
 FROM gcr.io/distroless/base-debian12 AS final
 
-# The nonroot user (UID 1001, GID 1001) is the default in distroless/base.
-USER 1001:1001
 WORKDIR /app
 
-# Copy the main application binary from the cert_builder stage
-COPY --chown=1001:1001 --from=cert_builder /app/docker-cert /app/docker-cert
+# Copy the binaries from the builder stages.
+# By default, COPY preserves permissions. Go builds binaries with execute permissions for all.
+# We will set the user to 'nonroot' which is provided by the base image.
+# This user is UID 65532, GID 65532.
+COPY --from=cert_builder /app/docker-cert /app/docker-cert
+COPY --from=healthcheck_builder /app/healthcheck /app/healthcheck
 
-# Copy the healthcheck utility from the healthcheck_builder stage
-COPY --chown=1001:1001 --from=healthcheck_builder /app/healthcheck /app/healthcheck
-
-# Ensure binaries are executable (permissions are generally preserved by COPY,
-# but good to ensure they were set in builder stage via go build defaults)
+# Set the user to the default non-root user provided by the distroless image.
+# This is a more secure default than running as root.
+# You can override this at runtime with `docker run --user <UID>:<GID> ...`
+USER nonroot
 
 EXPOSE 8080
 ENV INTERNAL_HTTP_PORT=8080
