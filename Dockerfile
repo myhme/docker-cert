@@ -48,6 +48,7 @@ RUN echo "Building healthcheck..." && \
 # We use this stage to prepare the filesystem layout and permissions.
 FROM debian:12-slim AS preparer
 
+# All variable data will live under /data
 ENV CERTS_BASE_PATH=/data/config
 WORKDIR /app
 
@@ -55,9 +56,10 @@ WORKDIR /app
 COPY --from=cert_builder /app/docker-cert /app/docker-cert
 COPY --from=healthcheck_builder /app/healthcheck /app/healthcheck
 
-# Create the certs directory and set ownership for it AND the binaries.
+# Create the data directory structure and set ownership for it AND the app binaries.
 # The 'nonroot' user in gcr.io/distroless/base-debian12 has UID 65532 and GID 65532.
-RUN mkdir -p ${CERTS_BASE_PATH} && chown 65532:65532 ${CERTS_BASE_PATH} /app/docker-cert /app/healthcheck
+RUN mkdir -p ${CERTS_BASE_PATH} \
+    && chown -R 65532:65532 /data /app
 
 # --- Final Stage (Distroless) ---
 # This is our final, minimal, secure image.
@@ -66,10 +68,10 @@ FROM gcr.io/distroless/base-debian12 AS final
 ENV CERTS_BASE_PATH=/data/config
 WORKDIR /app
 
-# Copy the fully prepared application directory and certs directory from the preparer stage.
+# Copy the fully prepared application and data directories from the preparer stage.
 # The ownership (65532:65532) set in the previous stage is preserved.
 COPY --from=preparer /app /app
-COPY --from=preparer ${CERTS_BASE_PATH} ${CERTS_BASE_PATH}
+COPY --from=preparer /data /data
 
 # Now, switch to the non-root user for runtime.
 USER nonroot
