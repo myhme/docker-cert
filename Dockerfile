@@ -43,23 +43,35 @@ RUN echo "Building healthcheck..." && \
         -ldflags '-s -w -extldflags "-static"' \
         -o /app/healthcheck ./cmd/healthcheck/main.go
 
-# --- Final Stage (Distroless) ---
-FROM gcr.io/distroless/base-debian12 AS final
+# ---- Intermediate "Preparer" Stage ----
+# Use a slim OS image that contains core utilities like mkdir and chown.
+# We use this stage to prepare the filesystem layout and permissions.
+FROM debian:12-slim AS preparer
 
-# Set environment variables that might be used
 ENV CERTS_BASE_PATH=/data/config
 WORKDIR /app
 
-# --- WORKAROUND for buildx issue ---
-# 1. Copy binaries from build stages first. This happens as the default root user.
+# Copy in the compiled binaries from the previous build stages.
 COPY --from=cert_builder /app/docker-cert /app/docker-cert
 COPY --from=healthcheck_builder /app/healthcheck /app/healthcheck
 
-# 2. As root, create the certs dir and change ownership of it AND the app binaries.
-#    This avoids using --chown in the COPY command, which can confuse some buildx versions.
-RUN mkdir -p ${CERTS_BASE_PATH} && chown nonroot:nonroot ${CERTS_BASE_PATH} /app/docker-cert /app/healthcheck
+# Create the certs directory and set ownership for it AND the binaries.
+# The 'nonroot' user in gcr.io/distroless/base-debian12 has UID 65532 and GID 65532.
+RUN mkdir -p ${CERTS_BASE_PATH} && chown 65532:65532 ${CERTS_BASE_PATH} /app/docker-cert /app/healthcheck
 
-# 3. Now, switch to the non-root user for runtime.
+# --- Final Stage (Distroless) ---
+# This is our final, minimal, secure image.
+FROM gcr.io/distroless/base-debian12 AS final
+
+ENV CERTS_BASE_PATH=/data/config
+WORKDIR /app
+
+# Copy the fully prepared application directory and certs directory from the preparer stage.
+# The ownership (65532:65532) set in the previous stage is preserved.
+COPY --from=preparer /app /app
+COPY --from=preparer ${CERTS_BASE_PATH} ${CERTS_BASE_PATH}
+
+# Now, switch to the non-root user for runtime.
 USER nonroot
 
 EXPOSE 8080
