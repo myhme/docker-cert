@@ -2,7 +2,7 @@ module docker-cert
 
 go 1.24
 
-require github.com/go-acme/lego/v4 v4.23.1 // Matching your 'go list -m' output
+require github.com/go-acme/lego/v4 v4.24.0 // Matching your 'go list -m' output
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect; indirect // Version might update with lego v4.23.1
