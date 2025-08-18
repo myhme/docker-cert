@@ -46,7 +46,7 @@ RUN echo "Building healthcheck..." && \
 # ---- Intermediate "Preparer" Stage ----
 # Use a slim OS image that contains core utilities like mkdir and chown.
 # We use this stage to prepare the filesystem layout and permissions.
-FROM debian:12-slim AS preparer
+FROM debian:13-slim AS preparer
 
 # All variable data will live under /data
 ENV CERTS_BASE_PATH=/data/config
