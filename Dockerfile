@@ -1,5 +1,5 @@
 # ---- Base Builder Stage (common setup, Go tools, vendored dependencies) ----
-FROM golang:1.24-alpine AS base_builder
+FROM golang:1.25-alpine AS base_builder
 LABEL stage="base_builder"
 
 WORKDIR /src/app
