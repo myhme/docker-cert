@@ -84,7 +84,7 @@ type ObtainRequest struct {
 
 	// A string uniquely identifying a previously-issued certificate which this
 	// order is intended to replace.
-	// - https://datatracker.ietf.org/doc/html/draft-ietf-acme-ari-03#section-5
+	// - https://www.rfc-editor.org/rfc/rfc9773.html#section-5
 	ReplacesCertID string
 }
 
@@ -113,7 +113,7 @@ type ObtainForCSRRequest struct {
 
 	// A string uniquely identifying a previously-issued certificate which this
 	// order is intended to replace.
-	// - https://datatracker.ietf.org/doc/html/draft-ietf-acme-ari-03#section-5
+	// - https://www.rfc-editor.org/rfc/rfc9773.html#section-5
 	ReplacesCertID string
 }
 
@@ -125,6 +125,7 @@ type CertifierOptions struct {
 	KeyType             certcrypto.KeyType
 	Timeout             time.Duration
 	OverallRequestLimit int
+	DisableCommonName   bool
 }
 
 // Certifier A service to obtain/renew/revoke certificates.
@@ -301,7 +302,7 @@ func (c *Certifier) getForOrder(domains []string, order acme.ExtendedOrder, requ
 	}
 
 	commonName := ""
-	if len(domains[0]) <= 64 {
+	if len(domains[0]) <= 64 && !c.options.DisableCommonName {
 		commonName = domains[0]
 	}
 
