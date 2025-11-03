@@ -21,6 +21,7 @@ const defaultBaseURL = "https://www.duckdns.org/update"
 type Client struct {
 	token string
 
+	baseURL    string
 	HTTPClient *http.Client
 }
 
@@ -28,23 +29,24 @@ type Client struct {
 func NewClient(token string) *Client {
 	return &Client{
 		token:      token,
+		baseURL:    defaultBaseURL,
 		HTTPClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
-func (c Client) AddTXTRecord(ctx context.Context, domain, value string) error {
+func (c *Client) AddTXTRecord(ctx context.Context, domain, value string) error {
 	return c.UpdateTxtRecord(ctx, domain, value, false)
 }
 
-func (c Client) RemoveTXTRecord(ctx context.Context, domain string) error {
+func (c *Client) RemoveTXTRecord(ctx context.Context, domain string) error {
 	return c.UpdateTxtRecord(ctx, domain, "", true)
 }
 
 // UpdateTxtRecord Update the domains TXT record
 // To update the TXT record we just need to make one simple get request.
 // In DuckDNS you only have one TXT record shared with the domain and all subdomains.
-func (c Client) UpdateTxtRecord(ctx context.Context, domain, txt string, clearRecord bool) error {
-	endpoint, _ := url.Parse(defaultBaseURL)
+func (c *Client) UpdateTxtRecord(ctx context.Context, domain, txt string, clearRecord bool) error {
+	endpoint, _ := url.Parse(c.baseURL)
 
 	mainDomain := getMainDomain(domain)
 	if mainDomain == "" {
@@ -79,6 +81,7 @@ func (c Client) UpdateTxtRecord(ctx context.Context, domain, txt string, clearRe
 	if body != "OK" {
 		return fmt.Errorf("request to change TXT record for DuckDNS returned the following result (%s) this does not match expectation (OK) used url [%s]", body, endpoint)
 	}
+
 	return nil
 }
 
@@ -96,6 +99,7 @@ func getMainDomain(domain string) string {
 		}
 
 		firstSubDomainIndex := split[len(split)-3]
+
 		return domain[firstSubDomainIndex:]
 	}
 
