@@ -77,14 +77,14 @@ type ObtainRequest struct {
 
 	// A string uniquely identifying the profile
 	// which will be used to affect issuance of the certificate requested by this Order.
-	// - https://www.ietf.org/id/draft-aaron-acme-profiles-00.html#section-4
+	// - https://www.ietf.org/id/draft-ietf-acme-profiles-00.html#section-4
 	Profile string
 
 	AlwaysDeactivateAuthorizations bool
 
 	// A string uniquely identifying a previously-issued certificate which this
 	// order is intended to replace.
-	// - https://datatracker.ietf.org/doc/html/draft-ietf-acme-ari-03#section-5
+	// - https://www.rfc-editor.org/rfc/rfc9773.html#section-5
 	ReplacesCertID string
 }
 
@@ -106,14 +106,14 @@ type ObtainForCSRRequest struct {
 
 	// A string uniquely identifying the profile
 	// which will be used to affect issuance of the certificate requested by this Order.
-	// - https://www.ietf.org/id/draft-aaron-acme-profiles-00.html#section-4
+	// - https://www.ietf.org/id/draft-ietf-acme-profiles-00.html#section-4
 	Profile string
 
 	AlwaysDeactivateAuthorizations bool
 
 	// A string uniquely identifying a previously-issued certificate which this
 	// order is intended to replace.
-	// - https://datatracker.ietf.org/doc/html/draft-ietf-acme-ari-03#section-5
+	// - https://www.rfc-editor.org/rfc/rfc9773.html#section-5
 	ReplacesCertID string
 }
 
@@ -125,6 +125,7 @@ type CertifierOptions struct {
 	KeyType             certcrypto.KeyType
 	Timeout             time.Duration
 	OverallRequestLimit int
+	DisableCommonName   bool
 }
 
 // Certifier A service to obtain/renew/revoke certificates.
@@ -197,6 +198,7 @@ func (c *Certifier) Obtain(request ObtainRequest) (*Resource, error) {
 	log.Infof("[%s] acme: Validations succeeded; requesting certificates", strings.Join(domains, ", "))
 
 	failures := newObtainError()
+
 	cert, err := c.getForOrder(domains, order, request)
 	if err != nil {
 		for _, auth := range authz {
@@ -294,6 +296,7 @@ func (c *Certifier) getForOrder(domains []string, order acme.ExtendedOrder, requ
 
 	if privateKey == nil {
 		var err error
+
 		privateKey, err = certcrypto.GeneratePrivateKey(c.options.KeyType)
 		if err != nil {
 			return nil, err
@@ -301,7 +304,7 @@ func (c *Certifier) getForOrder(domains []string, order acme.ExtendedOrder, requ
 	}
 
 	commonName := ""
-	if len(domains[0]) <= 64 {
+	if len(domains[0]) <= 64 && !c.options.DisableCommonName {
 		commonName = domains[0]
 	}
 
@@ -489,6 +492,7 @@ type RenewOptions struct {
 // If bundle is true, the []byte contains both the issuer certificate and your issued certificate as a bundle.
 //
 // For private key reuse the PrivateKey property of the passed in Resource should be non-nil.
+//
 // Deprecated: use RenewWithOptions instead.
 func (c *Certifier) Renew(certRes Resource, bundle, mustStaple bool, preferredChain string) (*Resource, error) {
 	return c.RenewWithOptions(certRes, &RenewOptions{
@@ -721,6 +725,7 @@ func checkOrderStatus(order acme.ExtendedOrder) (bool, error) {
 // https://www.rfc-editor.org/rfc/rfc5280.html#section-7
 func sanitizeDomain(domains []string) []string {
 	var sanitizedDomains []string
+
 	for _, domain := range domains {
 		sanitizedDomain, err := idna.ToASCII(domain)
 		if err != nil {
@@ -729,5 +734,6 @@ func sanitizeDomain(domains []string) []string {
 			sanitizedDomains = append(sanitizedDomains, sanitizedDomain)
 		}
 	}
+
 	return sanitizedDomains
 }
