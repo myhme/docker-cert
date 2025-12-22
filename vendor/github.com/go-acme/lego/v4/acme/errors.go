@@ -2,6 +2,7 @@ package acme
 
 import (
 	"fmt"
+	"strings"
 )
 
 // Errors types.
@@ -27,21 +28,25 @@ type ProblemDetails struct {
 }
 
 func (p *ProblemDetails) Error() string {
-	msg := fmt.Sprintf("acme: error: %d", p.HTTPStatus)
+	var msg strings.Builder
+
+	msg.WriteString(fmt.Sprintf("acme: error: %d", p.HTTPStatus))
+
 	if p.Method != "" || p.URL != "" {
-		msg += fmt.Sprintf(" :: %s :: %s", p.Method, p.URL)
+		msg.WriteString(fmt.Sprintf(" :: %s :: %s", p.Method, p.URL))
 	}
-	msg += fmt.Sprintf(" :: %s :: %s", p.Type, p.Detail)
+
+	msg.WriteString(fmt.Sprintf(" :: %s :: %s", p.Type, p.Detail))
 
 	for _, sub := range p.SubProblems {
-		msg += fmt.Sprintf(", problem: %q :: %s", sub.Type, sub.Detail)
+		msg.WriteString(fmt.Sprintf(", problem: %q :: %s", sub.Type, sub.Detail))
 	}
 
 	if p.Instance != "" {
-		msg += ", url: " + p.Instance
+		msg.WriteString(", url: " + p.Instance)
 	}
 
-	return msg
+	return msg.String()
 }
 
 // SubProblem a "subproblems".
@@ -49,7 +54,7 @@ func (p *ProblemDetails) Error() string {
 type SubProblem struct {
 	Type       string     `json:"type,omitempty"`
 	Detail     string     `json:"detail,omitempty"`
-	Identifier Identifier `json:"identifier,omitempty"`
+	Identifier Identifier `json:"identifier"`
 }
 
 // NonceError represents the error which is returned
@@ -60,7 +65,7 @@ type NonceError struct {
 
 // AlreadyReplacedError represents the error which is returned
 // If the Server rejects the request because the identified certificate has already been marked as replaced.
-// - https://datatracker.ietf.org/doc/html/draft-ietf-acme-ari-08#section-5
+// - https://www.rfc-editor.org/rfc/rfc9773.html#section-5
 type AlreadyReplacedError struct {
 	*ProblemDetails
 }

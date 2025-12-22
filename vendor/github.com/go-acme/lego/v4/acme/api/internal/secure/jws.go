@@ -36,6 +36,7 @@ func (j *JWS) SetKid(kid string) {
 // SignContent Signs a content with the JWS.
 func (j *JWS) SignContent(url string, content []byte) (*jose.JSONWebSignature, error) {
 	var alg jose.SignatureAlgorithm
+
 	switch k := j.privKey.(type) {
 	case *rsa.PrivateKey:
 		alg = jose.RS256
@@ -54,7 +55,7 @@ func (j *JWS) SignContent(url string, content []byte) (*jose.JSONWebSignature, e
 
 	options := jose.SignerOptions{
 		NonceSource: j.nonces,
-		ExtraHeaders: map[jose.HeaderKey]interface{}{
+		ExtraHeaders: map[jose.HeaderKey]any{
 			"url": url,
 		},
 	}
@@ -72,12 +73,14 @@ func (j *JWS) SignContent(url string, content []byte) (*jose.JSONWebSignature, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign content: %w", err)
 	}
+
 	return signed, nil
 }
 
 // SignEABContent Signs an external account binding content with the JWS.
 func (j *JWS) SignEABContent(url, kid string, hmac []byte) (*jose.JSONWebSignature, error) {
 	jwk := jose.JSONWebKey{Key: j.privKey}
+
 	jwkJSON, err := jwk.Public().MarshalJSON()
 	if err != nil {
 		return nil, fmt.Errorf("acme: error encoding eab jwk key: %w", err)
@@ -87,7 +90,7 @@ func (j *JWS) SignEABContent(url, kid string, hmac []byte) (*jose.JSONWebSignatu
 		jose.SigningKey{Algorithm: jose.HS256, Key: hmac},
 		&jose.SignerOptions{
 			EmbedJWK: false,
-			ExtraHeaders: map[jose.HeaderKey]interface{}{
+			ExtraHeaders: map[jose.HeaderKey]any{
 				"kid": kid,
 				"url": url,
 			},
@@ -108,6 +111,7 @@ func (j *JWS) SignEABContent(url, kid string, hmac []byte) (*jose.JSONWebSignatu
 // GetKeyAuthorization Gets the key authorization for a token.
 func (j *JWS) GetKeyAuthorization(token string) (string, error) {
 	var publicKey crypto.PublicKey
+
 	switch k := j.privKey.(type) {
 	case *ecdsa.PrivateKey:
 		publicKey = k.Public()
