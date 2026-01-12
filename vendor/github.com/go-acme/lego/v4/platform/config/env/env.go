@@ -16,11 +16,13 @@ func Get(names ...string) (map[string]string, error) {
 	values := map[string]string{}
 
 	var missingEnvVars []string
+
 	for _, envVar := range names {
 		value := GetOrFile(envVar)
 		if value == "" {
 			missingEnvVars = append(missingEnvVars, envVar)
 		}
+
 		values[envVar] = value
 	}
 
@@ -58,6 +60,7 @@ func GetWithFallback(groups ...[]string) (map[string]string, error) {
 	values := map[string]string{}
 
 	var missingEnvVars []string
+
 	for _, names := range groups {
 		if len(names) == 0 {
 			return nil, errors.New("undefined environment variable names")
@@ -68,6 +71,7 @@ func GetWithFallback(groups ...[]string) (map[string]string, error) {
 			missingEnvVars = append(missingEnvVars, envVar)
 			continue
 		}
+
 		values[envVar] = value
 	}
 
@@ -107,7 +111,7 @@ func getOneWithFallback(main string, names ...string) (string, string) {
 
 // GetOrDefaultString returns the given environment variable value as a string.
 // Returns the default if the env var cannot be found.
-func GetOrDefaultString(envVar string, defaultValue string) string {
+func GetOrDefaultString(envVar, defaultValue string) string {
 	return getOrDefault(envVar, defaultValue, ParseString)
 }
 
@@ -148,6 +152,7 @@ func GetOrFile(envVar string) string {
 	}
 
 	fileVar := envVar + "_FILE"
+
 	fileVarValue := os.Getenv(fileVar)
 	if fileVarValue == "" {
 		return envVarValue
@@ -183,4 +188,21 @@ func ParseString(s string) (string, error) {
 	}
 
 	return s, nil
+}
+
+// ParsePairs parses a raw string of comma-separated key-value pairs into a map.
+// Keys and values are separated by a colon and are trimmed of whitespace.
+func ParsePairs(raw string) (map[string]string, error) {
+	result := make(map[string]string)
+
+	for pair := range strings.SplitSeq(strings.TrimSuffix(raw, ","), ",") {
+		data := strings.Split(pair, ":")
+		if len(data) != 2 {
+			return nil, fmt.Errorf("incorrect pair: %s", pair)
+		}
+
+		result[strings.TrimSpace(data[0])] = strings.TrimSpace(data[1])
+	}
+
+	return result, nil
 }

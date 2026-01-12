@@ -38,7 +38,7 @@ const (
 
 // Directory the ACME directory object.
 // - https://www.rfc-editor.org/rfc/rfc8555.html#section-7.1.1
-// - https://datatracker.ietf.org/doc/draft-ietf-acme-ari/
+// - https://www.rfc-editor.org/rfc/rfc9773.html
 type Directory struct {
 	NewNonceURL   string `json:"newNonce"`
 	NewAccountURL string `json:"newAccount"`
@@ -77,13 +77,14 @@ type Meta struct {
 
 	// profiles (optional, object):
 	// A map of profile names to human-readable descriptions of those profiles.
-	// https://www.ietf.org/id/draft-aaron-acme-profiles-00.html#section-3
+	// https://www.ietf.org/id/draft-ietf-acme-profiles-00.html#section-3
 	Profiles map[string]string `json:"profiles"`
 }
 
 // ExtendedAccount an extended Account.
 type ExtendedAccount struct {
 	Account
+
 	// Contains the value of the response header `Location`
 	Location string `json:"-"`
 }
@@ -156,7 +157,7 @@ type Order struct {
 	// profile (string, optional):
 	// A string uniquely identifying the profile
 	// which will be used to affect issuance of the certificate requested by this Order.
-	// https://www.ietf.org/id/draft-aaron-acme-profiles-00.html#section-4
+	// https://www.ietf.org/id/draft-ietf-acme-profiles-00.html#section-4
 	Profile string `json:"profile,omitempty"`
 
 	// notBefore (optional, string):
@@ -196,7 +197,7 @@ type Order struct {
 	// replaces (optional, string):
 	// replaces (string, optional): A string uniquely identifying a
 	// previously-issued certificate which this order is intended to replace.
-	// - https://datatracker.ietf.org/doc/html/draft-ietf-acme-ari-03#section-5
+	// - https://www.rfc-editor.org/rfc/rfc9773.html#section-5
 	Replaces string `json:"replaces,omitempty"`
 }
 
@@ -220,11 +221,11 @@ type Authorization struct {
 	// The timestamp after which the server will consider this authorization invalid,
 	// encoded in the format specified in RFC 3339 [RFC3339].
 	// This field is REQUIRED for objects with "valid" in the "status" field.
-	Expires time.Time `json:"expires,omitempty"`
+	Expires time.Time `json:"expires,omitzero"`
 
 	// identifier (required, object):
 	// The identifier that the account is authorized to represent
-	Identifier Identifier `json:"identifier,omitempty"`
+	Identifier Identifier `json:"identifier"`
 
 	// challenges (required, array of objects):
 	// For pending authorizations, the challenges that the client can fulfill in order to prove possession of the identifier.
@@ -244,6 +245,7 @@ type Authorization struct {
 // ExtendedChallenge a extended Challenge.
 type ExtendedChallenge struct {
 	Challenge
+
 	// Contains the value of the response header `Retry-After`
 	RetryAfter string `json:"-"`
 	// Contains the value of the response header `Link` rel="up"
@@ -270,7 +272,7 @@ type Challenge struct {
 	// The time at which the server validated this challenge,
 	// encoded in the format specified in RFC 3339 [RFC3339].
 	// This field is REQUIRED if the "status" field is "valid".
-	Validated time.Time `json:"validated,omitempty"`
+	Validated time.Time `json:"validated,omitzero"`
 
 	// error (optional, object):
 	// Error that occurred while the server was validating the challenge, if any,
@@ -349,7 +351,7 @@ type Window struct {
 }
 
 // RenewalInfoResponse is the response to GET requests made the renewalInfo endpoint.
-// - (4.1. Getting Renewal Information) https://datatracker.ietf.org/doc/draft-ietf-acme-ari/
+// - (4.1. Getting Renewal Information) https://www.rfc-editor.org/rfc/rfc9773.html
 type RenewalInfoResponse struct {
 	// SuggestedWindow contains two fields, start and end,
 	// whose values are timestamps which bound the window of time in which the CA recommends renewing the certificate.
@@ -362,11 +364,11 @@ type RenewalInfoResponse struct {
 }
 
 // RenewalInfoUpdateRequest is the JWS payload for POST requests made to the renewalInfo endpoint.
-// - (4.2. RenewalInfo Objects) https://datatracker.ietf.org/doc/html/draft-ietf-acme-ari-03#section-4.2
+// - (4.2. RenewalInfo Objects) https://www.rfc-editor.org/rfc/rfc9773.html#section-4.2
 type RenewalInfoUpdateRequest struct {
 	// CertID is a composite string in the format: base64url(AKI) || '.' || base64url(Serial), where AKI is the
 	// certificate's authority key identifier and Serial is the certificate's serial number. For details, see:
-	// https://datatracker.ietf.org/doc/html/draft-ietf-acme-ari-03#section-4.1
+	// https://www.rfc-editor.org/rfc/rfc9773.html#section-4.1
 	CertID string `json:"certID"`
 	// Replaced is required and indicates whether or not the client considers the certificate to have been replaced.
 	// A certificate is considered replaced when its revocation would not disrupt any ongoing services,
